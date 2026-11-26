@@ -4,7 +4,7 @@
 // (dashboard/model.js, the same file the page runs), values every pre-token protocol, and writes:
 //   /output/board.json          the ranked board the gate checks
 //   /output/data.js             the page's dataset (window.RADAR), beside dashboard/
-//   /output/dashboard/          index.html, radar.css, radar.js, model.js and fit.json (the fit's record)
+//   /output/dashboard/          index.html, radar.js, style.css, model.js and fit.json (the fit's record)
 //   /output/screenshots/        the three captures handed in with the repository
 //   /output/dossier.json        what the judge reads, written last by the vendored make.fun library
 //
@@ -76,7 +76,7 @@ for (let f = 0; f < 10; f++) {
   liveSorted.forEach((p: any, i: number) => { if (i % 10 === f) blind[p.slug] = M.predictLog(fit, p, asOf).log; });
 }
 const liveRows = liveSorted.map((p: any) => ({
-  slug: p.slug, name: p.name, category: p.category, sector: M.sectorOf(p), chains: p.chains, tvl_usd: p.tvl_usd,
+  slug: p.slug, name: p.name, category: p.category, sector: M.sectorOf(p), chains: p.chains, tvl_usd: p.tvl_usd, priced_tvl: p.priced_tvl, family: p.family,
   change_7d: p.change_7d, mcap_usd: p.mcap_usd, symbol: p.symbol,
   fitted_usd: Math.round(10 ** M.predictLog(cal.fit, p, asOf).log), blind_usd: Math.round(10 ** blind[p.slug]!),
 })).sort((a: any, b: any) => b.mcap_usd - a.mcap_usd || a.slug.localeCompare(b.slug));
@@ -84,14 +84,13 @@ const liveRows = liveSorted.map((p: any) => ({
 const round = (v: number, d = 4) => Math.round(v * 10 ** d) / 10 ** d;
 const fitRecord = {
   fitted_on: live.length,
+  tokens_on_several_products: live.filter((p: any) => p.family > 1).length,
   terms: cal.fit.terms,
   coefficients: Object.fromEntries(['intercept', ...cal.fit.terms.filter((t: string) => t !== 'sector')].map((t, i) => [t, round(cal.fit.beta[i])])),
   sector_effects: Object.fromEntries(Object.entries(cal.fit.sector).map(([s, v]: [string, any]) => [s, { log10: round(v.effect), n: v.n }])),
   term_tests: cal.selection.table.map((t: any) => ({ term: t.term, kept: t.kept, kfold_with: round(t.with_kfold), kfold_without: round(t.without_kfold), walk_with: round(t.with_walk), walk_without: round(t.without_walk) })),
-  growth_and_age: { tvl_slope: round(cal.fit.tvl_slope), age_share_a: cal.selection.prior_weight, chosen_by: 'lowest mean blind error', free_slopes_beside_tvl: cal.selection.free.map((s: any) => ({ term: s.term, slope: round(s.slope), se: round(s.se) })) },
-  held_out: { kfold_mae_log10: round(cal.heldout.kfold_mae), walk_forward_mae_log10: round(cal.heldout.walk_mae), naive_median_mae_log10: round(cal.heldout.naive_mae), median_ratio_mae_log10: round(cal.heldout.ratio_mae), interval_80_log10: [round(cal.heldout.interval_lo), round(cal.heldout.interval_hi)], p25_p75_log10: [round(cal.heldout.lo50), round(cal.heldout.hi50)], held_out_inside_50: round(cal.heldout.honest.walk50), held_out_inside_80: round(cal.heldout.honest.walk80) },
-  board: { rows: board.length, watchlist_covered: `${covered}/${watch.length}`, sha256: boardSha, fnv: M.fnv(board) },
-  ledger: `${snapshot.protocols.length} = ${board.length} board + ${live.length} live + ${recorded.length} recorded + ${setAside.length} set aside (${board.length + live.length + recorded.length + setAside.length === snapshot.protocols.length ? 'adds up' : 'MISMATCH'})`,
+  growth_and_age: { tvl_slope: round(cal.fit.tvl_slope), age_share_a: cal.selection.prior_weight, free_slopes_beside_tvl: cal.selection.free.map((s: any) => ({ term: s.term, slope: round(s.slope), se: round(s.se) })) },
+  held_out: { kfold_mae_log10: round(cal.heldout.kfold_mae), walk_forward_mae_log10: round(cal.heldout.walk_mae), naive_median_mae_log10: round(cal.heldout.naive_mae), naive_median_walk_mae_log10: round(cal.heldout.naive_walk_mae), interval_80_log10: [round(cal.heldout.interval_lo), round(cal.heldout.interval_hi)], p25_p75_log10: [round(cal.heldout.lo50), round(cal.heldout.hi50)], held_out_inside_50: round(cal.heldout.honest.walk50), held_out_inside_80: round(cal.heldout.honest.walk80) },
   token_odds: { horizon_days: M.ODDS.horizonDays, fitted_on: cal.odds.n, with_token: cal.odds.tokened, kfold_log_loss: round(cal.odds.loss), sector_alone: round(cal.odds.sector_loss), base_rate: round(cal.odds.flat_loss), tests: cal.odds.tests.map((t: any) => `${t.term}: ${round(t.with)} vs ${round(t.without)}, slope ${round(t.slope, 2)}, ${t.kept ? 'kept' : 'dropped'}`) },
 };
 
@@ -121,7 +120,7 @@ function copyFiles(from: string, to: string): string[] {
 copyFiles(join(here, 'dashboard'), join(out, 'dashboard'));
 // two levels of line breaks, leaf records on one line: readable, and lighter on the judge's 64 KB
 const fitLines = (v: any, pad: string): string => {
-  if (v === null || typeof v !== 'object' || pad.length >= 2) return JSON.stringify(v);
+  if (v === null || typeof v !== 'object' || pad.length >= 1) return JSON.stringify(v);
   const items = Array.isArray(v) ? v.map((x) => `${pad} ${fitLines(x, pad + ' ')}`) : Object.entries(v).map(([k, x]) => `${pad} ${JSON.stringify(k)}: ${fitLines(x, pad + ' ')}`);
   return Array.isArray(v) ? `[\n${items.join(',\n')}\n${pad}]` : `{\n${items.join(',\n')}\n${pad}}`;
 };
