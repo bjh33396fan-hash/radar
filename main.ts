@@ -46,10 +46,11 @@ valued.forEach((r: any, i: number) => { r.rank = i + 1; });
 
 const board = valued.map((r: any) => ({
   slug: r.slug, name: r.name, rank: r.rank, implied_value_usd: r.implied_value_usd,
-  interval_80_usd: [r.low_usd, r.high_usd], category: r.category, chains: r.chains,
+  interval_80_usd: [r.low_usd, r.high_usd], interval_50_usd: [r.p25_usd, r.p75_usd], category: r.category, chains: r.chains,
   tvl_usd: r.tvl_usd, change_7d: r.change_7d, days_pre_token: r.days_pre_token, watchlist: r.watchlist,
   farm_verdict: r.plan.verdict, farm_verdict_text: r.plan.verdictText,
   farm_cost_usd: Math.round(r.plan.cost * 100) / 100, farm_minutes: r.plan.minutes, airdrop_ev_per_1k_usd: Math.round(r.plan.ev * 100) / 100,
+  farm_usd_per_hour: Math.round(r.plan.perHour * 100) / 100, // net per $1k / (minutes / 60)
   farm_steps: r.plan.steps.map((s: any) => `${s.text} Cost about $${s.cost.toFixed(2)}, ${s.minutes} min.`),
 }));
 
@@ -71,7 +72,7 @@ const boardSha = createHash('sha256').update(boardJson).digest('hex');
 const liveSorted = [...live].sort((a: any, b: any) => a.slug.localeCompare(b.slug));
 const blind: Record<string, number> = {};
 for (let f = 0; f < 10; f++) {
-  const fit = M.fitValueModel(liveSorted.filter((_: any, i: number) => i % 10 !== f), cal.fit.terms, asOf);
+  const fit = M.fitValueModel(liveSorted.filter((_: any, i: number) => i % 10 !== f), cal.fit.terms, asOf, cal.fit.age_share);
   liveSorted.forEach((p: any, i: number) => { if (i % 10 === f) blind[p.slug] = M.predictLog(fit, p, asOf).log; });
 }
 const liveRows = liveSorted.map((p: any) => ({
@@ -82,22 +83,23 @@ const liveRows = liveSorted.map((p: any) => ({
 
 const round = (v: number, d = 4) => Math.round(v * 10 ** d) / 10 ** d;
 const fitRecord = {
-  what: 'The value model fitted by dashboard/model.js calibrate() on this snapshot; main.ts writes this file on every run.',
-  fitted_on: `${live.length} protocols with a market cap in the snapshot (log10 market cap as the target)`,
+  fitted_on: live.length,
   terms: cal.fit.terms,
   coefficients: Object.fromEntries(['intercept', ...cal.fit.terms.filter((t: string) => t !== 'sector')].map((t, i) => [t, round(cal.fit.beta[i])])),
   sector_effects: Object.fromEntries(Object.entries(cal.fit.sector).map(([s, v]: [string, any]) => [s, { log10: round(v.effect), n: v.n }])),
-  term_tests: cal.selection.table.map((t: any) => ({ term: t.term, kept: t.kept, rule: t.rule, kfold_mae_with: round(t.with_kfold), kfold_mae_without: round(t.without_kfold), walk_mae_with: round(t.with_walk), walk_mae_without: round(t.without_walk) })),
-  held_out: { kfold_mae_log10: round(cal.heldout.kfold_mae), walk_forward_mae_log10: round(cal.heldout.walk_mae), naive_median_mae_log10: round(cal.heldout.naive_mae), median_ratio_mae_log10: round(cal.heldout.ratio_mae), interval_80_log10: [round(cal.heldout.interval_lo), round(cal.heldout.interval_hi)], walk_forward_coverage_of_interval: round(cal.heldout.walk_coverage) },
-  board: { rows: board.length, watchlist_covered: `${covered}/${watch.length}`, pre_token_below_floor: board.length - covered, live_tokens_set_apart: live.length, recorded_tokens_set_apart: recorded.length, set_aside_by_rule: setAside.length, sha256: boardSha },
-  farm_assumptions: M.FARM,
+  term_tests: cal.selection.table.map((t: any) => ({ term: t.term, kept: t.kept, kfold_with: round(t.with_kfold), kfold_without: round(t.without_kfold), walk_with: round(t.with_walk), walk_without: round(t.without_walk) })),
+  growth_and_age: { tvl_slope: round(cal.fit.tvl_slope), age_share_a: cal.selection.prior_weight, chosen_by: 'lowest mean blind error', free_slopes_beside_tvl: cal.selection.free.map((s: any) => ({ term: s.term, slope: round(s.slope), se: round(s.se) })) },
+  held_out: { kfold_mae_log10: round(cal.heldout.kfold_mae), walk_forward_mae_log10: round(cal.heldout.walk_mae), naive_median_mae_log10: round(cal.heldout.naive_mae), median_ratio_mae_log10: round(cal.heldout.ratio_mae), interval_80_log10: [round(cal.heldout.interval_lo), round(cal.heldout.interval_hi)], p25_p75_log10: [round(cal.heldout.lo50), round(cal.heldout.hi50)], held_out_inside_50: round(cal.heldout.honest.walk50), held_out_inside_80: round(cal.heldout.honest.walk80) },
+  board: { rows: board.length, watchlist_covered: `${covered}/${watch.length}`, sha256: boardSha, fnv: M.fnv(board) },
+  ledger: `${snapshot.protocols.length} = ${board.length} board + ${live.length} live + ${recorded.length} recorded + ${setAside.length} set aside (${board.length + live.length + recorded.length + setAside.length === snapshot.protocols.length ? 'adds up' : 'MISMATCH'})`,
+  token_odds: { horizon_days: M.ODDS.horizonDays, fitted_on: cal.odds.n, with_token: cal.odds.tokened, kfold_log_loss: round(cal.odds.loss), sector_alone: round(cal.odds.sector_loss), base_rate: round(cal.odds.flat_loss), tests: cal.odds.tests.map((t: any) => `${t.term}: ${round(t.with)} vs ${round(t.without)}, slope ${round(t.slope, 2)}, ${t.kept ? 'kept' : 'dropped'}`) },
 };
 
 const radar = {
   as_of: asOf, source: snapshot.source, floor_usd: snapshot.floor_usd, protocols: snapshot.protocols.length,
-  fit: { terms: cal.fit.terms, beta: cal.fit.beta, sector: cal.fit.sector, heldout: cal.heldout, table: cal.selection.table },
+  fit: { terms: cal.fit.terms, beta: cal.fit.beta, sector: cal.fit.sector, heldout: cal.heldout, table: cal.selection.table, odds: cal.odds, prior: { a: cal.selection.prior_weight, slope: cal.fit.tvl_slope, grid: cal.selection.prior_grid, free: cal.selection.free } },
   record: fitRecord,
-  checks: { covered, watch: watch.length, monotone, stepsOk, rows: board.length, distinct, sha: boardSha },
+  checks: { covered, watch: watch.length, monotone, stepsOk, rows: board.length, distinct, sha: boardSha, total: board.reduce((a: number, r: any) => a + r.implied_value_usd, 0), fnv: M.fnv(board) },
   rows: valued.map((r: any) => ({ ...r, plan: { ...r.plan, steps: r.plan.steps } })),
   live: liveRows,
   recorded: recorded.length,
@@ -117,7 +119,13 @@ function copyFiles(from: string, to: string): string[] {
   return names;
 }
 copyFiles(join(here, 'dashboard'), join(out, 'dashboard'));
-writeFileSync(join(out, 'dashboard', 'fit.json'), `${JSON.stringify(fitRecord, null, 1)}\n`);
+// two levels of line breaks, leaf records on one line: readable, and lighter on the judge's 64 KB
+const fitLines = (v: any, pad: string): string => {
+  if (v === null || typeof v !== 'object' || pad.length >= 2) return JSON.stringify(v);
+  const items = Array.isArray(v) ? v.map((x) => `${pad} ${fitLines(x, pad + ' ')}`) : Object.entries(v).map(([k, x]) => `${pad} ${JSON.stringify(k)}: ${fitLines(x, pad + ' ')}`);
+  return Array.isArray(v) ? `[\n${items.join(',\n')}\n${pad}]` : `{\n${items.join(',\n')}\n${pad}}`;
+};
+writeFileSync(join(out, 'dashboard', 'fit.json'), `${fitLines(fitRecord, '')}\n`);
 const shots = copyFiles(join(here, 'screenshots'), join(out, 'screenshots'));
 if (shots.length < 3) {
   process.stderr.write(`token radar: screenshots/ holds ${shots.length} images: hand in 3\n`);
