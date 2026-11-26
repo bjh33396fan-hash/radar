@@ -325,14 +325,16 @@
  Object.assign(PLAYBOOK, { Exchange: PLAYBOOK.Other, Yield: CATEGORY_STEPS.Yield, RWA: CATEGORY_STEPS.RWA });
 
  const thousands = (n) => String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
- // 3 sig. figures from $1M ($B from $1B), whole dollars from $100, cents below
- const usd = (v) => (v >= 1e9 ? `$${(v / 1e9).toPrecision(3)}B` : v >= 1e6 ? `$${(v / 1e6).toPrecision(3)}M` : v >= 100 ? `$${thousands(v)}` : `$${v.toFixed(2)}`);
+ // 2 sig. figures from $1M ($B from $1B; held-out misses run x2.9), whole dollars from $100, cents below
+ const usd = (v) => (v >= 1e9 ? `$${Number((v / 1e9).toPrecision(2))}B` : v >= 1e6 ? `$${Number((v / 1e6).toPrecision(2))}M` : v >= 100 ? `$${thousands(v)}` : `$${v >= 1 ? Number(v.toPrecision(2)) : v.toFixed(2)}`);
 
- function farmPlan(p, value, odds) {
+ // o: { deposit, share, gasX } re-runs the plan at another deposit, airdrop share or gas level; FARM itself is never changed
+ function farmPlan(p, value, odds, o = {}) {
+  const dep = o.deposit ?? FARM.deposit, drop = o.share ?? FARM.airdropShare, gx = o.gasX ?? 1;
   // chains are listed largest first: the cheapest of the first three
   const main = p.chains.slice(0, 3);
   const chains = main.map((c, i) => [c, i]).sort((a, b) => gasOf(a[0]) - gasOf(b[0]) || a[1] - b[1]).map((x) => x[0]);
-  const chain = chains[0] || 'Ethereum', gas = gasOf(chain), route = routeOf(chain);
+  const chain = chains[0] || 'Ethereum', gas = gasOf(chain) * gx, route = routeOf(chain);
   const sector = sectorOf(p), apy = BASE_APY[sector] ?? 0.01, days = FARM.horizonDays;
   const cheaper = p.chains.length > 1 && gasOf(p.chains[0]) > gas ? `, not ${p.chains[0]} (${usd(gasOf(p.chains[0]))} a transaction against ${usd(gas)})` : '';
   const steps = [];
@@ -340,38 +342,45 @@
   // when: the day each step happens, counted from the deposit
   let when = 'day 0';
   const add = (text, n, min, extra = 0) => { steps.push({ text, cost: n * gas + extra, minutes: min, when }); txs += n; minutes += min; };
-  add(`Install ${route.wallet} and fund it on ${chain}${cheaper}: move ${usd(FARM.deposit)} as ${route.bridge}.`, 1, 15, FARM.bridgeUsd);
-  add(`Follow ${p.name}'s docs and X account so a points or season launch is seen on day one; activity from before it usually counts.`, 0, 10);
+  add(`Install ${route.wallet} and fund it on ${chain}${cheaper}: move ${usd(dep)} as ${route.bridge}; that is 1 part in ${thousands(p.tvl_usd / dep)} of ${p.name}'s ${usd(p.tvl_usd)} TVL, the share any pro-rata drop pays.`, 1, 15, FARM.bridgeUsd);
+  add(`Follow ${p.name}'s docs and X account so a points or season launch is seen on day one (odds of a token within ${ODDS.horizonDays} days: ${Math.round(odds.rate * 100)}%, model.js launchOdds); activity from before it usually counts.`, 0, 10);
+  // entry timing from the snapshot's own 7-day change (percent; board median about -8%): a sharp fall gets a split entry (one more transaction)
+  const g = p.change_7d ?? 0, gp = `${g > 0 ? '+' : ''}${g.toFixed(1)}%`;
+  when = g < -15 ? 'day 0 and 7' : 'day 0';
+  if (g < -15) add(`TVL moved ${gp} in 7 days: put in half on day 0 and the other ${usd(dep / 2)} on day 7 only if TVL still prints above ${usd(p.tvl_usd * 0.9)}.`, 1, 5);
+  else add(`TVL moved ${gp} in 7 days, ${g > 5 ? 'so points per dollar are diluting: enter in full on day 0, do not average in' : 'no sharp fall: enter in full on day 0'}; re-read TVL on day 7.`, 0, 2);
   const own = CATEGORY_STEPS[p.category];
   for (const [what, n, min] of own || PLAYBOOK[sector]) when = /halfway/.test(what) ? `day ${days / 2}` : 'week 1', add(`${what.replace(/\{n\}/g, p.name)} (${chain}; ${n === 0 ? 'reading only, no transaction' : `${n} transaction${n === 1 ? '' : 's'}`}).`, n, min);
   const monthly = sector === 'RWA' || sector === 'Staking' ? 0 : Math.round(days / 30);
   when = `every 30 days`;
   if (monthly > 0) add(`Top up or repeat the main action once a month for ${days} days (${monthly} more transactions), keeping the balance steady so time-weighted points keep accruing.`, monthly, 5 * monthly);
-  const share = FARM.deposit / p.tvl_usd;
-  const ev = FARM.airdropShare * value * share * (days / FARM.seasonDays) * odds.rate;
-  const yieldUsd = FARM.deposit * apy * (days / 365);
-  const risk = FARM.deposit * FARM.lossRatePerYear * (days / 365);
+  const share = dep / p.tvl_usd;
+  const ev = drop * value * share * (days / FARM.seasonDays) * odds.rate;
+  const yieldUsd = dep * apy * (days / 365);
+  const risk = dep * FARM.lossRatePerYear * (days / 365);
   when = `day ${days}`;
   add(`Exit after ${days} days or at the snapshot, whichever comes first: withdraw in one transaction; exit at once if TVL prints below ${usd(p.tvl_usd / 2)} (half of today) or the team rules out a token.`, 1, 5);
   const cost = steps.reduce((a, s) => a + s.cost, 0);
-  // net from the printed cents: the sum reads as shown
-  const c = (v) => Math.round(v * 100) / 100, net = c(ev) + c(yieldUsd) - c(cost) - c(risk);
+  // net from the printed parts (2 figures, as shown): the sum reads as shown
+  const c = (v) => (Math.abs(v) >= 1 ? Number(v.toPrecision(2)) : Math.round(v * 100) / 100), net = c(ev) + c(yieldUsd) - c(cost) - c(risk);
   // the bar is not zero: the same dollars earn 4% in T-bills over the same days, at no contract risk
-  const billAt = (d) => d * FARM.billRate * (days / 365), bill = c(billAt(FARM.deposit)), over = net - bill;
+  const billAt = (d) => d * FARM.billRate * (days / 365), bill = c(billAt(dep)), over = net - bill;
   const ratio = ev / cost;
-  const breakEven = cost / (ev / FARM.deposit);
+  const breakEven = cost / (ev / dep);
   const size = Math.ceil((3 * breakEven) / 1000) * 1000;
   const hours = (minutes + 2) / 60, perHour = over / hours;
-  const netAt = (d) => ((ev + yieldUsd - risk) * d) / FARM.deposit - cost - billAt(d), sizeHour = netAt(size) / hours;
+  const netAt = (d) => ((ev + yieldUsd - risk) * d) / dep - cost - billAt(d), sizeHour = netAt(size) / hours;
   const verdict = ratio >= 3 && over > 0 ? 'Farm' : ratio >= 1 && net > 0 ? 'Test' : size <= FARM.scaleCap && netAt(size) > 0 ? 'Scale' : 'Watch';
   const sg = (v) => `${v >= 0 ? '+' : '-'}${usd(Math.abs(v))}`;
+  // $/h to 2 figures, as on the board: the inputs are guesses, cents would be false precision
+  const sh = (v) => `${v >= 0 ? '+' : '-'}$${Math.abs(v) >= 9.95 ? Math.round(Math.abs(v)) : Math.abs(v).toFixed(1)}`;
   const verdictText = {
    Farm: `the drop alone is ${ratio.toFixed(1)}x the gas and the plan beats T-bills by ${usd(over)}`,
    Test: over > 0 ? `beats T-bills by ${usd(over)}, but the drop is only ${ratio.toFixed(1)}x gas; a small test` : `net ${sg(net)} trails T-bills (${usd(bill)}): a test for the drop's upside, not for income`,
-   Scale: `${ratio.toFixed(1)}x gas at ${usd(FARM.deposit)}; from ${usd(size)} the drop is 3x gas, ${sg(sizeHour)}/h over T-bills`,
+   Scale: `${ratio.toFixed(1)}x gas at ${usd(dep)}; from ${usd(size)} the drop is 3x gas, ${sh(sizeHour)}/h over T-bills`,
    Watch: `at this TVL no deposit up to ${usd(FARM.scaleCap)} gets the drop to 3x gas and past T-bills; re-check if TVL halves or points open`,
   }[verdict];
-  steps.push({ text: `Expected result for ${usd(FARM.deposit)}: airdrop ${usd(ev)} (${(FARM.airdropShare * 100).toFixed(1)}% of the ${usd(value)} implied value, pro rata to TVL, ${days}/${FARM.seasonDays} season days, x ${(odds.rate * 100).toFixed(0)}% odds of a token in ${ODDS.horizonDays} days) + ${usd(yieldUsd)} of ${(apy * 100).toFixed(1)}% yield - ${usd(cost)} gas - ${usd(risk)} contract risk = net ${sg(net)}; 4% T-bills pay ${usd(bill)}, so ${sg(over)} over T-bills, ${sg(perHour)}/h over ${minutes + 2} min. Verdict ${verdict}: ${verdictText}.`, cost: 0, minutes: 2, when });
+  steps.push({ text: `Expected result for ${usd(dep)}: airdrop ${usd(ev)} (${(drop * 100).toFixed(1)}% of the ${usd(value)} implied value, pro rata to TVL, ${days}/${FARM.seasonDays} season days, x ${(odds.rate * 100).toFixed(0)}% odds of a token in ${ODDS.horizonDays} days) + ${usd(yieldUsd)} of ${(apy * 100).toFixed(1)}% yield - ${usd(cost)} gas - ${usd(risk)} contract risk = net ${sg(net)}; 4% T-bills pay ${usd(bill)}, so ${sg(over)} over T-bills, ${sh(perHour)}/h over ${minutes + 2} min. Verdict ${verdict}: ${verdictText}.`, cost: 0, minutes: 2, when });
   return { chain, gas, steps, ev, yieldUsd, net, bill, over, cost, risk, ratio, verdict, verdictText, breakEven, size, perHour, sizeHour, minutes: minutes + 2, txs };
  }
 
