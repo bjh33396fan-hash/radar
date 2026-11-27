@@ -49,8 +49,8 @@ const board = valued.map((r: any) => ({
   interval_80_usd: [r.low_usd, r.high_usd], interval_50_usd: [r.p25_usd, r.p75_usd], category: r.category, chains: r.chains,
   tvl_usd: r.tvl_usd, change_7d: r.change_7d, days_pre_token: r.days_pre_token, watchlist: r.watchlist,
   farm_verdict: r.plan.verdict, farm_verdict_text: r.plan.verdictText,
-  farm_cost_usd: Math.round(r.plan.cost * 100) / 100, farm_minutes: r.plan.minutes, airdrop_ev_per_1k_usd: Math.round(r.plan.ev * 100) / 100,
-  farm_usd_per_hour: Math.round(r.plan.perHour * 100) / 100, // net per $1k / (minutes / 60)
+  farm_cost_usd: Math.round(r.plan.cost * 100) / 100, farm_minutes: r.plan.minutes, airdrop_ev_per_10k_usd: Math.round(r.plan.ev * 100) / 100,
+  farm_usd_per_hour: Math.round(r.plan.perHour * 100) / 100, // net over T-bills per $10k / (minutes / 60)
   farm_steps: r.plan.steps.map((s: any) => `${s.text} Cost about $${s.cost.toFixed(2)}, ${s.minutes} min.`),
 }));
 
@@ -91,6 +91,8 @@ const fitRecord = {
   term_tests: cal.selection.table.map((t: any) => ({ term: t.term, kept: t.kept, kfold_with: round(t.with_kfold), kfold_without: round(t.without_kfold), walk_with: round(t.with_walk), walk_without: round(t.without_walk) })),
   growth_and_age: { tvl_slope: round(cal.fit.tvl_slope), age_share_a: cal.selection.prior_weight, free_slopes_beside_tvl: cal.selection.free.map((s: any) => ({ term: s.term, slope: round(s.slope), se: round(s.se) })) },
   held_out: { kfold_mae_log10: round(cal.heldout.kfold_mae), walk_forward_mae_log10: round(cal.heldout.walk_mae), naive_median_mae_log10: round(cal.heldout.naive_mae), naive_median_walk_mae_log10: round(cal.heldout.naive_walk_mae), interval_80_log10: [round(cal.heldout.interval_lo), round(cal.heldout.interval_hi)], p25_p75_log10: [round(cal.heldout.lo50), round(cal.heldout.hi50)], held_out_inside_50: round(cal.heldout.honest.walk50), held_out_inside_80: round(cal.heldout.honest.walk80) },
+  board_like_tokens: { n: cal.heldout.like.n, kfold_mae_log10: round(cal.heldout.like.kfold_mae), kfold_median_log10: round(cal.heldout.like.kfold_med), walk_mae_log10: round(cal.heldout.like.walk_mae), walk_median_log10: round(cal.heldout.like.walk_med) },
+  bootstrap_sd: { refits: cal.heldout.boot.refits, intercept: round(cal.heldout.boot.base), tvl_slope: round(cal.heldout.boot.slope), big: round(cal.heldout.boot.big ?? 0), sector: Object.fromEntries(Object.entries(cal.heldout.boot.sector).map(([k, v]: [string, any]) => [k, round(v)])) },
   token_odds: { horizon_days: M.ODDS.horizonDays, fitted_on: cal.odds.n, with_token: cal.odds.tokened, kfold_log_loss: round(cal.odds.loss), sector_alone: round(cal.odds.sector_loss), base_rate: round(cal.odds.flat_loss), tests: cal.odds.tests.map((t: any) => `${t.term}: ${round(t.with)} vs ${round(t.without)}, slope ${round(t.slope, 2)}, ${t.kept ? 'kept' : 'dropped'}`) },
 };
 
