@@ -93,7 +93,7 @@ const fitRecord = {
   held_out: { kfold_mae_log10: round(cal.heldout.kfold_mae), walk_forward_mae_log10: round(cal.heldout.walk_mae), naive_median_mae_log10: round(cal.heldout.naive_mae), naive_median_walk_mae_log10: round(cal.heldout.naive_walk_mae), interval_80_log10: [round(cal.heldout.interval_lo), round(cal.heldout.interval_hi)], p25_p75_log10: [round(cal.heldout.lo50), round(cal.heldout.hi50)], held_out_inside_50: round(cal.heldout.honest.walk50), held_out_inside_80: round(cal.heldout.honest.walk80) },
   board_like_tokens: { n: cal.heldout.like.n, kfold_mae_log10: round(cal.heldout.like.kfold_mae), kfold_median_log10: round(cal.heldout.like.kfold_med), walk_mae_log10: round(cal.heldout.like.walk_mae), walk_median_log10: round(cal.heldout.like.walk_med) },
   bootstrap_sd: { refits: cal.heldout.boot.refits, intercept: round(cal.heldout.boot.base), tvl_slope: round(cal.heldout.boot.slope), big: round(cal.heldout.boot.big ?? 0), sector: Object.fromEntries(Object.entries(cal.heldout.boot.sector).map(([k, v]: [string, any]) => [k, round(v)])) },
-  token_odds: { horizon_days: M.ODDS.horizonDays, fitted_on: cal.odds.n, with_token: cal.odds.tokened, kfold_log_loss: round(cal.odds.loss), sector_alone: round(cal.odds.sector_loss), base_rate: round(cal.odds.flat_loss), tests: cal.odds.tests.map((t: any) => `${t.term}: ${round(t.with)} vs ${round(t.without)}, slope ${round(t.slope, 2)}, ${t.kept ? 'kept' : 'dropped'}`) },
+  token_odds: { horizon_days: M.ODDS.horizonDays, fitted_on: cal.odds.n, with_token: cal.odds.tokened, kfold_log_loss: round(cal.odds.loss), sector_alone: round(cal.odds.sector_loss), base_rate: round(cal.odds.flat_loss), brier: round(cal.odds.brier[0]), brier_sector: round(cal.odds.brier[1]), brier_base: round(cal.odds.brier[2]), tests: cal.odds.tests.map((t: any) => `${t.term}: ${round(t.with)} vs ${round(t.without)}, slope ${round(t.slope, 2)}, ${t.kept ? 'kept' : 'dropped'}`) },
 };
 
 const radar = {
@@ -105,6 +105,8 @@ const radar = {
   live: liveRows,
   recorded: recorded.length,
   setAside: setAside.reduce((a: Record<string, number>, r: any) => { a[r.reason] = (a[r.reason] || 0) + 1; return a; }, {}),
+  // the largest set-aside of each kind, by TVL: what a raw-TVL ranking would put on top
+  asideTop: [...setAside].sort((a: any, b: any) => b.tvl_usd - a.tvl_usd || a.slug.localeCompare(b.slug)).filter((r: any, i: number, s: any[]) => s.findIndex((x: any) => x.reason === r.reason) === i).slice(0, 4).map((r: any) => [r.name, r.reason.replace('category ', ''), r.tvl_usd]),
   snap: Object.fromEntries(pre.map((p: any) => [p.slug, p])),
 };
 
